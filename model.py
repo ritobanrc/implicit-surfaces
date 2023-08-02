@@ -4,6 +4,7 @@ import torch.optim as optim
 import numpy as np
 import render
 import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
 device = render.device
 
@@ -28,7 +29,7 @@ def first_layer_sine_init(m):
 
 
 class Sine(nn.Module):
-    def __init__(self, const=30.):
+    def __init__(self, const=2.):
         super().__init__()
         self.const = const
 
@@ -55,8 +56,9 @@ class Net(nn.Module):
         for _ in range(n_blocks):
             self.blocks.append(nn.Linear(hidden_size, hidden_size))
         self.blocks.append(nn.Linear(hidden_size, output_size))
-        # self.act = Sine()
-        self.act = nn.GELU()
+        self.act = Sine()
+        # self.act = nn.ReLU()
+        # self.act = nn.ELU()
 
         # Initialization
         self.apply(sine_init)
@@ -76,15 +78,18 @@ class Net(nn.Module):
 
 # Generate synthetic data points on the sphere
 def generate_data(num_points):
-    x = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(device)
-    y = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(device)
-    z = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(device)
+    x = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(torch.float32).to(device)
+    y = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(torch.float32).to(device)
+    z = torch.from_numpy(np.random.uniform(-1, 1, num_points)).to(torch.float32).to(device)
 
-    data = torch.stack([x, y, z])
-    # labels = np.linalg.norm(data, axis=1) - 1
-    labels = render.default_levelset(x, y, z)
+    data = torch.column_stack([x, y, z])
+    # labels = torch.linalg.norm(data, axis=1) - 1.
+    # labels = render.default_levelset(x, y, z)
+    labels = render.box(torch.tensor([0.5, 0.5, 0.5]).to(device))(x, y, z)
 
     return data, labels
+
+writer = SummaryWriter()
 
 # Generate training data
 num_train_points = 1000
@@ -94,7 +99,7 @@ train_data, train_labels = generate_data(num_train_points)
 input_size = 3  # Dimensionality of the input data (x, y, z coordinates)
 hidden_size = 32  # Number of hidden units in each layer
 output_size = 1  # Binary classification (inside or outside the sphere)
-n_blocks = 4
+n_blocks = 8
 
 # model = MLP(input_size, hidden_size, output_size).to(device)
 model = Net(input_size, output_size, hidden_size, n_blocks).to(device)
@@ -102,7 +107,7 @@ criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Training loop
-num_epochs = 1000
+num_epochs = 5000
 
 # def eikonal_loss(gradient):
     # # Compute the L2 norm of the gradient
@@ -112,6 +117,13 @@ num_epochs = 1000
     # eikonal_penalty = torch.mean((gradient_norm - 1.0) ** 2)
 
     # return eikonal_penalty
+
+def levelset(x, y, z):
+    p = torch.stack([x, y, z], dim=-1)
+    r = model(p).flatten()
+    return r
+
+make_image = lambda: render.render_image(levelset, resolution=(200, 200), max_distance=10.0, light_direction=torch.tensor([-1.0, -1.0, 1.0]).to(device))
 
 for epoch in range(num_epochs):
     train_data.requires_grad = True
@@ -137,17 +149,15 @@ for epoch in range(num_epochs):
     optimizer.step()
 
     if (epoch + 1) % 100 == 0:
+        image = make_image()
+        writer.add_image('image', image, epoch, dataformats='HWC')
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.8f}")
+
+    writer.add_scalar('loss', total_loss, epoch)
 
 print("Training finished!")
 
-# Now render the learned levelset
-def levelset(x, y, z):
-    p = torch.stack([x, y, z], dim=-1)
-    r = model(p).flatten()
-    return r
-
-image = render.render_image(levelset, resolution=(200, 200), max_distance=10.0, light_direction=torch.tensor([-1.0, -1.0, 1.0]))
+image = make_image()
 
 plt.imshow(image)
 plt.axis('off')
