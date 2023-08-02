@@ -5,6 +5,9 @@ import time
 # Define the levelset function (same as before)
 # def levelset(x, y, z):
     # return torch.sqrt(x**2 + y**2 + z**2) - 1.0
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
+device = 'cpu'
+print("Using device: ", device)
 
 def union_levelset(levelset_func1, levelset_func2):
     def union(x, y, z):
@@ -30,7 +33,7 @@ def translate(func, dx, dy, dz):
 
 
 def default_levelset(x, y, z):
-    box1 = translate(box(torch.tensor([0.25, 0.25, 0.25])), 0, -1, 0)
+    box1 = translate(box(torch.tensor([0.25, 0.25, 0.25], device=device)), 0, -1, 0)
     sphere2 = sphere(0.01*(torch.sin(50*y) + 1) + 0.25)
     torus3 = translate(torus(0.2, 0.1), 0, 1, 0)
     return union_levelset(union_levelset(box1, sphere2), torus3)(x, y, z)
@@ -45,7 +48,7 @@ def calculate_normal(levelset, pos):
 
 # Ray marching function (updated to handle batches of rays)
 def ray_march(levelset, origin, directions, max_steps=100, max_distance=100.0, epsilon=1e-6):
-    t = torch.zeros(directions.shape[0])  # Initialize t for each ray to 0.0
+    t = torch.zeros(directions.shape[0], device=device)  # Initialize t for each ray to 0.0
     for i in range(max_steps):
         pos = origin + t[:, None] * directions
         distance = levelset(pos[:, 0], pos[:, 1], pos[:, 2])
@@ -68,12 +71,12 @@ def lambertian_shading(normals, light_direction):
 def render_image(levelset, resolution=(200, 200), max_distance=100.0, light_direction=torch.tensor([1.0, 1.0, -1.0])):
     height, width = resolution
     # image = 1/255 * torch.ones((width, height, 3)) * torch.tensor([21, 21, 21], dtype=torch.float32)  # Background color (dark grey)
-    image = torch.zeros((width, height, 3), dtype=torch.float32)
+    image = torch.zeros((width, height, 3), dtype=torch.float32, device=device)
     fov = torch.tensor([1.0, 1.0])
     aspect_ratio = width / height
     
-    x = torch.linspace(-fov[0] / 2, fov[0] / 2, width)
-    y = torch.linspace(-fov[1] / 2, fov[1] / 2, height)
+    x = torch.linspace(-fov[0] / 2, fov[0] / 2, width, device=device)
+    y = torch.linspace(-fov[1] / 2, fov[1] / 2, height, device=device)
     
     # Create a grid of pixel positions
     x, y = torch.meshgrid(x, y, indexing='ij')
@@ -83,7 +86,7 @@ def render_image(levelset, resolution=(200, 200), max_distance=100.0, light_dire
     direction /= torch.norm(direction, dim=-1, keepdim=True)
     
     # Batched ray marching
-    origin = torch.tensor([0.0, 0.0, 3.0])
+    origin = torch.tensor([0.0, 0.0, 3.0], device=device)
     t = ray_march(levelset, origin, direction.reshape(-1, 3), max_distance=max_distance)
     
     # Reshape t back to the image size
@@ -97,12 +100,12 @@ def render_image(levelset, resolution=(200, 200), max_distance=100.0, light_dire
     normals = normals.reshape(width, height, 3)
     
     # Lambertian shading
-    shading = lambertian_shading(normals, light_direction)
+    shading = lambertian_shading(normals, light_direction.to(device))
 
-    ambient = torch.tensor([0.3, 0.4, 0.5])
+    ambient = torch.tensor([0.3, 0.4, 0.5], device=device)
     image[t >= max_distance] = ambient
 
-    albedo = torch.tensor([0.2, 0.5, 0.2], dtype=torch.float32)  # Green
+    albedo = torch.tensor([0.2, 0.5, 0.2], dtype=torch.float32, device=device)  # Green
     image[t < max_distance] = ambient * albedo
 
     color = albedo * shading.unsqueeze(-1)  # Apply shading to the object color
@@ -110,7 +113,7 @@ def render_image(levelset, resolution=(200, 200), max_distance=100.0, light_dire
     # image = torch.clamp(image, 0, 255).byte()
     
     # Set the shading as the image color
-    image = image.detach().numpy()  # Detach the tensor before converting to NumPy array
+    image = image.cpu().detach().numpy()  # Detach the tensor before converting to NumPy array
     
     return image
 
